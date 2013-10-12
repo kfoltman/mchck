@@ -37,6 +37,12 @@ usb_tx_next(struct usbd_ep_pipe_state_t *s)
 		s->pos += thislen;
 		s->transfer_size -= thislen;
 
+		/* If EP0 and data in Flash, use scratch RAM */
+		if (s == &usb.ep_state[0].tx && addr < (void *)0x08000000) {
+			void *ram_addr = usb_ep0_tx_inplace_prepare(thislen);
+			memcpy(ram_addr, addr, thislen);
+			addr = ram_addr;
+		}
 		usb_queue_next(s, addr, thislen);
 		s->pingpong ^= 1;
 
@@ -176,6 +182,11 @@ usb_ep0_tx_inplace_prepare(size_t len)
 int
 usb_ep0_tx_cp(const void *buf, size_t len, size_t reqlen, ep_callback_t cb, void *cb_data)
 {
+	/* For buffers in flash memory, use copying logic in usb_tx_next, as
+	 * it allows for buffers longer than the endpoint size. */
+	if (buf < (void *)0x08000000)
+		return (usb_ep0_tx((void *)buf, len, reqlen, cb, cb_data));
+
 	void *destbuf = usb_ep0_tx_inplace_prepare(len);
 
 	if (destbuf == NULL)
