@@ -10,6 +10,20 @@ sys_reset(void)
         for (;;);
 }
 
+void
+sys_jump_to_programmer(void)
+{
+        SCB_VTOR = 0;
+        /* addr is in r0 */
+        __asm__("ldr r1, [%[addr], #4]\n"
+                "ldr sp, [%[addr]]\n"
+                "add r1, r1, #18\n"
+                "mov pc, r1"
+                :: [addr] "r" (0));
+        /* NOTREACHED */
+        __builtin_unreachable();
+}
+
 void __attribute__((noreturn))
 sys_yield_for_frogs(void)
 {

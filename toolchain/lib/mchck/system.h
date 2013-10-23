@@ -6,6 +6,7 @@ size_t strlen(const char *str);
 
 void sys_reset(void);
 void __attribute__((noreturn)) sys_yield_for_frogs(void);
+void __attribute__((noreturn)) sys_jump_to_programmer(void);
 
 void crit_enter(void);
 void crit_exit(void);
