@@ -183,7 +183,7 @@ main(void)
 #endif
         fifo_init(&uart_tx_fifo, uart_tx_fifo_buffer, sizeof(uart_tx_fifo_buffer));
 
-        uart_init(&uart0_ctx, UART_0);
+        uart_init(&uart0_ctx, UART_CH0);
         uart_set_baud_rate(&uart0_ctx, 31250);
         uart_tx_enable(&uart0_ctx, &uart_tx_fifo);
         uart_tx_set_invert(&uart0_ctx, 1);
