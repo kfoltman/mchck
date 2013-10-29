@@ -61,7 +61,7 @@ init_usbmidi(int config)
 
 const struct usbd_device usbmidi_device = 
         USB_INIT_DEVICE(0x2323,              /* vid */
-                        4,                   /* pid */
+                        5,                   /* pid */
                         u"mchck.org",        /* vendor */
                         u"USB MIDI adapter", /* product" */
                         (init_usbmidi,       /* init */
