@@ -26,8 +26,8 @@ typedef __CHAR16_TYPE__ char16_t;
         struct _CONCAT(_CONCAT(__dummy_, __COUNTER__), _t) {}
 
 #define UNION_STRUCT_END                        \
-        }; /* struct */                         \
-        }; /* union */
+        } __packed; /* struct */                         \
+        } __packed; /* union */
 
 
 /**
