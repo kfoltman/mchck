@@ -1,15 +1,19 @@
 #include <mchck.h>
 
 struct UART_t {
-        struct UART_BD_t {
-                UNION_STRUCT_START(16);
+        struct UART_BDH_t {
+                UNION_STRUCT_START(8);
                 uint8_t sbrh:5;
                 uint8_t _pad:1;
                 uint8_t rxedgie:1;
                 uint8_t lbkdie:1;
+                UNION_STRUCT_END;
+        } bdh;
+        struct UART_BDL_t {
+                UNION_STRUCT_START(8);
                 uint8_t sbrl:8;
                 UNION_STRUCT_END;
-        } bd;
+        } bdl;
         struct UART_C1_t {
                 UNION_STRUCT_START(8);
                 uint8_t pt:1;
@@ -157,7 +161,7 @@ struct UART_t {
         uint8_t CPW; /* Collision Pulse Width */
         uint8_t RIDT; /* Receive Indeterminate Time */
         uint8_t TIDT; /* Transmit Indeterminate Time */
-};
+} __packed;
 
 CTASSERT_SIZE_BYTE(struct UART_t, 50);
 
