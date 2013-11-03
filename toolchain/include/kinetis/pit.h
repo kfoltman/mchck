@@ -25,7 +25,7 @@ struct PIT_t {
                         uint32_t _pad:31;
                         UNION_STRUCT_END;
                 } tflg;
-        } timers[4];
+        } timer[4];
 };
 
 CTASSERT_SIZE_BYTE(struct PIT_t, 256 + 64);
