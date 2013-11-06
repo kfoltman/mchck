@@ -1,6 +1,8 @@
 PROG=	usb-midi
 USE=	usb
 
+SRCS+=	usb-midi.c spiflash.c
+
 include ../../toolchain/mchck.mk
 
 flashbang: boottoprg flash

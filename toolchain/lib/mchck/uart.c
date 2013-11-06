@@ -39,8 +39,8 @@ uart_set_baud_rate(struct uart_ctx *ctx, int baud_rate)
         baud_rate = ((master_clock << 2) / baud_rate + 1) >> 1;
         ctx->uart->c4.brfa = baud_rate & 31;
         baud_rate = baud_rate >> 5;
-        ctx->uart->bd.sbrh = baud_rate >> 8;
-        ctx->uart->bd.sbrl = baud_rate & 255;
+        ctx->uart->bdh.sbrh = baud_rate >> 8;
+        ctx->uart->bdl.sbrl = baud_rate & 255;
 }
 
 void

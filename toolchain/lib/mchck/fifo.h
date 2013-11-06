@@ -15,6 +15,9 @@ struct fifo_ctx
 void
 fifo_init(struct fifo_ctx *fifo, void *buffer, uint16_t len);
 
+void
+fifo_clear(struct fifo_ctx *fifo);
+
 /**
  * Check the amount of data that can be read from the FIFO
  * @retval The number of bytes available for reading.
@@ -86,6 +89,20 @@ fifo_read_byte(struct fifo_ctx *fifo)
         if (fifo->read_ptr == fifo->write_ptr)
                 return -1;
         uint8_t result = fifo->buffer[fifo->read_ptr];
+        fifo_read_advance(fifo, 1);
+        return result;
+}
+
+/**
+ * Read a single byte from the FIFO, if possible.
+ * @retval The single value (if available), or -1 if no data
+ */
+static inline const uint8_t *
+fifo_read_byte_inplace(struct fifo_ctx *fifo)
+{
+        if (fifo->read_ptr == fifo->write_ptr)
+                return NULL;
+        const uint8_t *result = &fifo->buffer[fifo->read_ptr];
         fifo_read_advance(fifo, 1);
         return result;
 }

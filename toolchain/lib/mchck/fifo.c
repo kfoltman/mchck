@@ -11,6 +11,13 @@ fifo_init(struct fifo_ctx *fifo, void *buffer, uint16_t len)
         fifo->write_space_threshold = 0;
 }
 
+void
+fifo_clear(struct fifo_ctx *fifo)
+{
+        fifo->read_ptr = 0;
+        fifo->write_ptr = 0;
+}
+
 int
 fifo_read_block(struct fifo_ctx *fifo, void *data, uint16_t len)
 {
