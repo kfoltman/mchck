@@ -122,48 +122,41 @@ struct UART_t {
         } ir;
         uint8_t _pad0;
         /* FIFO registers */
-        uint8_t PFIFO;
-        uint8_t CFIFO;
-        uint8_t SFIFO;
-        uint8_t TWFIFO;
-        uint8_t TCFIFO;
-        uint8_t RWFIFO;
-        uint8_t RCFIFO;
-        uint8_t _pad1;
-        /* ISO-7816 registers */
-        uint8_t C7816;
-        uint8_t IE7816;
-        uint8_t IS7816;
-        union {
-                uint8_t WP7816T0;
-                uint8_t WP7816T1;
-        };
-        uint8_t WN7816;
-        uint8_t WF7816;
-        uint8_t ET7816;
-        uint8_t TL7816;
-        /* CEA709.1-B registers */
-        uint8_t _pad2;
-        uint8_t C6;
-        uint8_t PCTH;
-        uint8_t PCTL;
-        uint8_t B1T;
-        uint8_t SDTH;
-        uint8_t SDTL;
-        uint8_t PRE;
-        uint8_t TPL;
-        uint8_t IE; /* Interrupt Enable */
-        uint8_t WB; /* WBASE */
-        uint8_t S3; /* Status 3 */
-        uint8_t S4; /* Status 4 */
-        uint8_t RPL; /* Received Packet Length */
-        uint8_t RPREL; /* Received Preamble Length */
-        uint8_t CPW; /* Collision Pulse Width */
-        uint8_t RIDT; /* Receive Indeterminate Time */
-        uint8_t TIDT; /* Transmit Indeterminate Time */
+        struct UART_PFIFO_t {
+                UNION_STRUCT_START(8);
+                uint8_t rxfifosize:3;
+                uint8_t rxfe:1;
+                uint8_t txfifosize:3;
+                uint8_t txfe:1;
+                UNION_STRUCT_END;
+        } pfifo;
+        struct UART_CFIFO_t {
+                UNION_STRUCT_START(8);
+                uint8_t rxufe:1;
+                uint8_t txofe:1;
+                uint8_t rxofe:1;
+                uint8_t _pad:3;
+                uint8_t rxflush:1;
+                uint8_t txflush:1;
+                UNION_STRUCT_END;
+        } cfifo;
+        struct UART_SFIFO_t {
+                UNION_STRUCT_START(8);
+                uint8_t rxuf:1;
+                uint8_t txof:1;
+                uint8_t rxof:1;
+                uint8_t _pad:3;
+                uint8_t rxempt:1;
+                uint8_t txempt:1;
+                UNION_STRUCT_END;
+        } sfifo;
+        uint8_t twfifo;
+        uint8_t tcfifo;
+        uint8_t rwfifo;
+        uint8_t rcfifo;
 } __packed;
 
-CTASSERT_SIZE_BYTE(struct UART_t, 50);
+CTASSERT_SIZE_BYTE(struct UART_t, 23);
 
 extern volatile struct UART_t UART0;
 extern volatile struct UART_t UART1;
