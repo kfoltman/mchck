@@ -1,13 +1,12 @@
 // 1. compress start-of-song events before first note
 // 2. find out why next song playback is not working / rewrite the code
 // 3. implement previous song
-// 4. change to sysex format
-// 5. add status feedback as sysex
-// 6. write a client
+// 4. change to sysex format (mostly done)
+// 5. add status feedback as sysex (mostly done)
+// 6. write a client (partially done)
 // 7. add SMF export
 // 8. add SMF import
 #include <mchck.h>
-#include "spiflash.h"
 
 #include <usb/usb.h>
 #include <usb/usbmidi.h>
@@ -33,6 +32,19 @@ struct midi_rx
         uint8_t buffer[3];
 } mrx;
 
+enum {
+        SYSEX_CMD_RESET = 1,
+        SYSEX_CMD_PLAY = 2,
+        SYSEX_CMD_STOP = 3,
+        SYSEX_CMD_ERASE = 4,
+        SYSEX_CMD_ERASE_RESPONSE = 0x44,
+        SYSEX_CMD_STATUS = 5,
+        SYSEX_CMD_STATUS_RESPONSE = 0x45,
+        SYSEX_CMD_SKIP = 6,
+        SYSEX_CMD_TRANSFER = 7,
+        SYSEX_CMD_TRANSFER_RESPONSE = 0x47,
+};
+
 /****************************************************************************/
 
 static struct usbmidi_ctx umctx;
@@ -43,6 +55,12 @@ static struct fifo_ctx uart_tx_fifo;
 static uint8_t uart_tx_fifo_buffer[32];
 
 struct uart_ctx uart0_ctx;
+
+void
+uart_tx_unblocked(void *cbdata, unsigned space)
+{
+        usbmidi_read_more(&umctx);
+}
 
 /****************************************************************************/
 
@@ -74,6 +92,17 @@ pit_init(void)
  * Flash handling
  ****************************************************************************/
 
+enum PlaybackMode
+{
+        PM_ERASE,
+        PM_RECORD,
+        PM_PLAY_TO_MIDI,
+        PM_X, // 3
+        PM_PLAY_TO_USB,
+        PM_PLAY_TO_BOTH,
+        PM_SKIP_FORWARD,
+};
+
 static int has_flash = 0;
 static volatile int flash_access_in_progress = 0;
 
@@ -87,7 +116,7 @@ static uint8_t flash_byte = 255;
 static uint8_t request_stop = 0;
 static uint8_t first_event_to_record = 0;
 
-static volatile uint8_t seq_mode = 2;
+static volatile enum PlaybackMode seq_mode = PM_RECORD;
 
 volatile uint32_t time_next_note = -1, time_last_delay = 0;
 volatile int note_received = 0;
@@ -102,10 +131,13 @@ midiflash_start_playback(int to_usb, int delay, uint32_t start_addr);
 static void
 midiflash_start_recording(uint32_t addr)
 {
-        first_event_to_record = 1;
-        flash_write_addr = addr;
-        seq_mode = 1;
-        last_write_time = systime;
+        if (addr < 1048576)
+        {
+                first_event_to_record = 1;
+                flash_write_addr = addr;
+                seq_mode = PM_RECORD;
+                last_write_time = systime;
+        }
         fifo_clear(&flash_write_fifo);
 }
 
@@ -118,10 +150,12 @@ my_erase_cb(void *data)
                 onboard_led(0);
                 flash_access_in_progress = 0;
                 flash_read_addr = 0;
+                usb_midi_send(0x4, 0xF0, 0x47, SYSEX_CMD_ERASE_RESPONSE);
+                usb_midi_send(0x5, 0xF7, 0, 0);
                 midiflash_start_recording(0);
                 return;
         }
-        seq_mode = 0;
+        seq_mode = PM_ERASE;
         onboard_led(0 != (erase_pointer & 65536));
         flash_access_in_progress = 1;
         erase_pointer += 4096;
@@ -137,8 +171,6 @@ midiflash_init(void)
         if (has_flash)
         {
                 fifo_init(&flash_write_fifo, (uint8_t *)flash_write_fifo_buffer, sizeof(flash_write_fifo_buffer));
-                //spiflash_program_page(0, (const uint8_t *)"Test", 4, dummy_cb, NULL);
-                //spiflash_read_page(&rdvalue[0], 0, 2, dummy_cb, NULL);
         }
 }
 
@@ -159,8 +191,14 @@ static void
 midiflash_do_program(void)
 {
         crit_enter();
-        if (has_flash && seq_mode == 1 && !flash_access_in_progress)
+        if (has_flash && seq_mode == PM_RECORD && !flash_access_in_progress)
         {
+                if (flash_write_addr >= 1048576 - 256)
+                {
+                        onboard_led(1);
+                        crit_exit();
+                        return;
+                }
                 const uint8_t *data = fifo_read_byte_inplace(&flash_write_fifo);
                 if (data)
                 {
@@ -176,12 +214,12 @@ midiflash_do_program(void)
 void PIT0_Handler(void)
 {
         systime++;
-        if ((seq_mode == 2 || seq_mode == 4 || seq_mode == 5) && (request_stop || systime >= time_next_note) && note_received)
+        if ((seq_mode == PM_PLAY_TO_MIDI || seq_mode == PM_PLAY_TO_USB || seq_mode == PM_PLAY_TO_BOTH) && (request_stop || systime >= time_next_note) && note_received)
         {
                 note_received = 0;
                 midiflash_do_playback(NULL);
         }
-        if (seq_mode == 1)
+        if (seq_mode == PM_RECORD)
                 midiflash_do_program();
         PIT.timer[0].tflg.tif = 1;
 }
@@ -231,7 +269,7 @@ midiflash_read_callback(void *cbdata)
 {
         if (flash_byte == 255) // EOF
         {
-                if (seq_mode == 6)
+                if (seq_mode == PM_SKIP_FORWARD)
                 {
                         flash_access_in_progress = 0;
                         midiflash_start_playback(2, 0, flash_read_addr);
@@ -242,7 +280,7 @@ midiflash_read_callback(void *cbdata)
         else if (flash_byte == 0xFE) // delay
         {
                 flash_read_addr += 2;
-                if (seq_mode == 6)
+                if (seq_mode == PM_SKIP_FORWARD)
                 {
                         spiflash_read_page(&flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
                 }
@@ -254,7 +292,7 @@ midiflash_read_callback(void *cbdata)
         }
         else
         {
-                if (seq_mode == 6)
+                if (seq_mode == PM_SKIP_FORWARD)
                         spiflash_read_page(&flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
                 else
                         note_received = 1;
@@ -267,9 +305,9 @@ midiflash_do_playback(void *cbdata)
         if (flash_byte != 255)
         {
                 note_received = 0;
-                if (seq_mode == 2 || seq_mode == 5)
+                if (seq_mode == PM_PLAY_TO_MIDI || seq_mode == PM_PLAY_TO_BOTH)
                         uart_tx(&uart0_ctx, flash_byte);
-                if (seq_mode == 4 || seq_mode == 5)
+                if (seq_mode == PM_PLAY_TO_USB || seq_mode == PM_PLAY_TO_BOTH)
                         uart_rx_handler(NULL, flash_byte);
 
                 spiflash_read_page(&flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
@@ -312,6 +350,7 @@ static uint8_t pagedata[2];
 static void
 midiflash_findend_cb(void *cbdata)
 {
+        onboard_led(0);
         seekpos --;
         while(flash_write_fifo_buffer[seekpos & 255] == 255)
                 seekpos--;
@@ -322,6 +361,14 @@ midiflash_findend_cb(void *cbdata)
 static void
 midiflash_findend_page_cb(void *cbdata)
 {
+        if (seekpos >= 1048576 - 256)
+        {
+                onboard_led(0);
+                flash_write_addr = 1048576;
+                flash_access_in_progress = 0;
+                return;
+        }
+        onboard_led(seekpos & 32768 ? 1 : 0);
         if (pagedata[0] == 255 && pagedata[1] == 255)
         {
                 if (seekpos == 0)
@@ -360,16 +407,131 @@ midiflash_findend(void)
 
 /****************************************************************************/
 
-void
-uart_tx_unblocked(void *cbdata, unsigned space)
+static int sysex_state = 0;
+static uint8_t sysex_buffer[16];
+
+/****************************************************************************/
+
+static uint8_t usb_readout_buf[20]; /* 4 bytes padding */
+
+static void readout_cb(void *cbdata)
 {
-        usbmidi_read_more(&umctx);
+        int i;
+        usb_midi_send(0x4, 0xF0, 0x47, SYSEX_CMD_TRANSFER_RESPONSE);
+        
+        /* 16 bytes -> 128 bits -> 19 bytes in 7-bit encoding;
+        that makes 6 3-byte packets + 1 2-byte packet (including termination) */
+        
+        uint32_t shiftreg = 0;
+        for (i = 0; i < 7; i++)
+        {
+                int bitc = 21 * i;
+                memcpy(&shiftreg, usb_readout_buf + (bitc >> 3), 4);
+                shiftreg >>= (bitc & 7);
+                if (i < 6)
+                        usb_midi_send(0x4, (shiftreg & 127), (shiftreg >> 7) & 127, (shiftreg >> 14) & 127);
+                else
+                        usb_midi_send(0x6, (shiftreg & 127), 0xF7, 0);
+        }
+        seq_mode = PM_RECORD;
+        flash_access_in_progress = 0;
+}
+
+/****************************************************************************/
+
+static
+void handle_sysex_end(void)
+{
+        switch(sysex_buffer[0])
+        {
+        case SYSEX_CMD_RESET:
+                RFVBAT_REG7 |= 1;
+                sys_reset();
+                return;
+        case SYSEX_CMD_PLAY:
+                if (sysex_state == 2)
+                {
+                        int pm = sysex_buffer[1];
+                        if (pm == PM_PLAY_TO_MIDI || pm == PM_PLAY_TO_USB || pm == PM_PLAY_TO_BOTH)
+                                midiflash_start_playback(pm, 0, 0);
+                }
+                if (sysex_state == 5)
+                {
+                        int pm = sysex_buffer[1];
+                        if (pm == PM_PLAY_TO_MIDI || pm == PM_PLAY_TO_USB || pm == PM_PLAY_TO_BOTH)
+                                midiflash_start_playback(pm, 0, sysex_buffer[2] + 128 * sysex_buffer[3] + 128 * 128 * sysex_buffer[4]);
+                }
+                break;                
+        case SYSEX_CMD_STOP:
+                midiflash_stop();
+                break;
+        case SYSEX_CMD_ERASE:
+                // XXXKF this is wrong, needs to queue the operation
+                if (!flash_access_in_progress && sysex_state == 3 && sysex_buffer[1] == 0x55 && sysex_buffer[2] == 0x2A)
+                        my_erase_cb(NULL);
+                break;                
+        case SYSEX_CMD_STATUS:
+                usb_midi_send(0x4, 0xF0, 0x47, SYSEX_CMD_STATUS_RESPONSE);
+                usb_midi_send(0x4, seq_mode, flash_access_in_progress, 0);
+                usb_midi_send(0x4, flash_write_addr & 127, (flash_write_addr >> 7) & 127, (flash_write_addr >> 14) & 127);
+                usb_midi_send(0x4, flash_read_addr & 127, (flash_read_addr >> 7) & 127, (flash_read_addr >> 14) & 127);
+                usb_midi_send(0x5, 0xF7, 0, 0);
+                break;
+        case SYSEX_CMD_SKIP:
+                midiflash_next();
+                break;
+        case SYSEX_CMD_TRANSFER:
+                if (sysex_state == 4 && seq_mode == PM_RECORD && !flash_access_in_progress)
+                {
+                        flash_access_in_progress = 1;
+                        flash_read_addr = sysex_buffer[1] + 128 * sysex_buffer[2] + 128 * 128 * sysex_buffer[3];
+                        spiflash_read_page(usb_readout_buf, flash_read_addr, 16, readout_cb, NULL);
+                }
+                break;                
+        }
+        sysex_state = 0;
+}
+
+static
+void handle_sysex_byte(uint8_t byte)
+{
+        if (sysex_state >= 16)
+                return;
+        sysex_buffer[sysex_state++] = byte;
 }
 
 int
 new_data(void *data, uint8_t addr_and_type, uint8_t ctl, uint8_t data1, uint8_t data2)
 {
         onboard_led(-1);
+        if (ctl == 0xF0 && data1 == 0x47) {
+                sysex_state = 1;
+                sysex_buffer[0] = data2;
+                onboard_led(-1);
+                return fifo_flow_control(&uart_tx_fifo, 6, uart_tx_unblocked, 0);
+        }
+        if (sysex_state)
+        {
+                if (ctl == 0xF7)
+                        handle_sysex_end();
+                else
+                {
+                        handle_sysex_byte(ctl);
+                        if (data1 == 0xF7)
+                                handle_sysex_end();
+                        else
+                        {
+                                handle_sysex_byte(data1);
+                                if (data2 == 0xF7)
+                                        handle_sysex_end();
+                                else
+                                        handle_sysex_byte(data2);
+                        }
+                }
+                onboard_led(-1);
+                return fifo_flow_control(&uart_tx_fifo, 6, uart_tx_unblocked, 0);
+        }                
+        
         if (addr_and_type >= 2 && addr_and_type <= 7) {
                 uart_tx(&uart0_ctx, ctl);
                 if (addr_and_type != 5)
@@ -378,38 +540,6 @@ new_data(void *data, uint8_t addr_and_type, uint8_t ctl, uint8_t data1, uint8_t 
                         uart_tx(&uart0_ctx, data2);
         }
         else {
-#ifdef DEBUG
-                if (ctl == 0xF9) {
-                        RFVBAT_REG7 |= 1;
-                        sys_reset();
-                }
-                if (ctl == 0xF8) {
-                        if (has_flash)
-                        {
-                                if (erase_pointer)
-                                        usb_midi_send(0xB, 0xB0, (erase_pointer >> 12) & 127, erase_pointer >> (12 + 7));
-                                else if (seq_mode == 1)
-                                        usb_midi_send(0xA, 0xA0, flash_write_addr & 127, flash_write_addr >> 7);
-                                else
-                                        usb_midi_send(0x9, 0x90, flash_read_addr & 127, flash_read_addr >> 7);
-                        }
-                        else
-                                usb_midi_send(0x8, 0x80, 0, 0);
-                }
-                if (ctl == 0x90) {  /* play first */
-                        midiflash_start_playback(data1, data2, 0);
-                }
-                if (ctl == 0x91 && !flash_access_in_progress) {  /* erase flash */
-                        my_erase_cb(NULL);
-                }
-                if (ctl == 0x92) { /* stop */
-                        midiflash_stop();
-                }
-                if (ctl == 0x93) { /* play next */
-                        //midiflash_start_playback(6, data2, flash_read_addr);
-                        midiflash_next();
-                }
-#endif
                 if (ctl >= 0x80)
                 {
                         int bytes = usbmidi_bytes_from_ctl(ctl);
@@ -438,7 +568,7 @@ const struct usbd_device usbmidi_device =
         USB_INIT_DEVICE(0x2323,              /* vid */
                         5,                   /* pid */
                         u"mchck.org",        /* vendor */
-                        u"USB MIDI adapter", /* product" */
+                        u"mchck recording MIDI adapter", /* product" */
                         (init_usbmidi,       /* init */
                          USBMIDI)           /* functions */
                 );
@@ -450,52 +580,58 @@ static inline void usb_midi_send(uint8_t addr_type, uint8_t ctl, uint8_t data1, 
         usbmidi_tx(&umctx, addr_type, ctl, data1, data2);
 }
 
+static void record_event(int bytes, uint8_t cmd, uint8_t arg1, uint8_t arg2)
+{
+        while (((int)(systime - last_write_time)) > 0)
+        {
+                uint32_t cur_systime = systime;
+                uint32_t delay = cur_systime - last_write_time;
+                if (delay > 16383)
+                        delay = 16383;
+                if (first_event_to_record && delay > 10)
+                        delay = 10;
+                
+                fifo_write_byte(&flash_write_fifo, 0xFE);
+                fifo_write_byte(&flash_write_fifo, delay & 127);
+                fifo_write_byte(&flash_write_fifo, delay >> 7);
+                last_write_time = cur_systime;
+                // We don't care about times > 16s
+                break;
+        }
+        if (cmd >= 0x90 && cmd < 0xA0)
+                first_event_to_record = 0;
+        if (bytes >= 1)
+                fifo_write_byte(&flash_write_fifo, cmd);
+        if (bytes >= 2)
+                fifo_write_byte(&flash_write_fifo, arg1);
+        if (bytes >= 3)
+                fifo_write_byte(&flash_write_fifo, arg2);
+}
+
 static void on_uart_midi_received(int bytes, uint8_t cmd, uint8_t arg1, uint8_t arg2)
 {
         if (seq_mode == 1 && cmd != 0xFE)
+                record_event(bytes, cmd, arg1, arg2);
+
+        switch(bytes)
         {
-                while (((int)(systime - last_write_time)) > 0)
-                {
-                        uint32_t cur_systime = systime;
-                        uint32_t delay = cur_systime - last_write_time;
-                        if (delay > 16383)
-                                delay = 16383;
-                        if (first_event_to_record && delay > 10)
-                                delay = 10;
-                        
-                        fifo_write_byte(&flash_write_fifo, 0xFE);
-                        fifo_write_byte(&flash_write_fifo, delay & 127);
-                        fifo_write_byte(&flash_write_fifo, delay >> 7);
-                        last_write_time = cur_systime;
-                        // We don't care about times > 16s
-                        break;
-                }
-                if (cmd >= 0x90 && cmd < 0xA0)
-                        first_event_to_record = 0;
-                if (bytes >= 1)
-                        fifo_write_byte(&flash_write_fifo, cmd);
-                if (bytes >= 2)
-                        fifo_write_byte(&flash_write_fifo, arg1);
-                if (bytes >= 3)
-                        fifo_write_byte(&flash_write_fifo, arg2);
-        }
-        if (bytes == 1)
-        {
+        case 1:
                 usb_midi_send(cmd >> 4, cmd, 0, 0);
-        }
-        if (bytes == 2)
-        {
+                break;
+        case 2:
                 if (cmd < 0xF0)
                         usb_midi_send(cmd >> 4, cmd, arg1, 0);
                 else
                         usb_midi_send(2, cmd, arg1, 0);
-        }
-        if (bytes == 3)
-        {
+                break;
+        case 3:
                 if (cmd < 0xF0)
                         usb_midi_send(cmd >> 4, cmd, arg1, arg2);
                 else
                         usb_midi_send(3, cmd, arg1, arg2);
+                break;
+        default:
+                break;
         }
 }
 
@@ -590,8 +726,8 @@ main(void)
         uart_tx_enable(&uart0_ctx, &uart_tx_fifo);
         uart_tx_set_invert(&uart0_ctx, 1);
         
-        //if (seq_mode == 2)
-        //        midiflash_start_playback(2, 0, 0);
+        if (seq_mode == PM_PLAY_TO_MIDI || seq_mode == PM_PLAY_TO_USB || seq_mode == PM_PLAY_TO_BOTH)
+                midiflash_start_playback(seq_mode, 0, 0);
         
         usb_init(&usbmidi_device);
         

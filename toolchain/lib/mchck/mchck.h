@@ -10,3 +10,4 @@
 #include <mchck/ftm.h>
 #include <mchck/fifo.h>
 #include <mchck/uart.h>
+#include <mchck/spiflash.h>

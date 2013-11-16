@@ -1,7 +1,7 @@
 PROG=	usb-midi
 USE=	usb
 
-SRCS+=	usb-midi.c spiflash.c
+SRCS+=	usb-midi.c
 
 include ../../toolchain/mchck.mk
 
