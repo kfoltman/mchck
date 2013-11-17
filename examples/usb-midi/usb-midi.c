@@ -103,7 +103,7 @@ enum PlaybackMode
         PM_SKIP_FORWARD,
 };
 
-static int has_flash = 0;
+static volatile int has_flash = -1;
 static volatile int flash_access_in_progress = 0;
 
 static struct fifo_ctx flash_write_fifo;
@@ -162,16 +162,21 @@ my_erase_cb(void *data)
         spiflash_erase_sector(erase_pointer - 4096, my_erase_cb, NULL);
 }
 
+void flash_detect_cb(void *cbdata, uint8_t status)
+{
+        has_flash = status;
+}
+
 static void
 midiflash_init(void)
 {
         spi_init();
         spiflash_pins_init();
-        has_flash = spiflash_is_present();
+        spiflash_is_present(flash_detect_cb, NULL);
+        while(has_flash == -1)
+                ;
         if (has_flash)
-        {
                 fifo_init(&flash_write_fifo, (uint8_t *)flash_write_fifo_buffer, sizeof(flash_write_fifo_buffer));
-        }
 }
 
 static void
