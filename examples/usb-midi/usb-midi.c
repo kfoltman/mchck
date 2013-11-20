@@ -55,6 +55,7 @@ static struct fifo_ctx uart_tx_fifo;
 static uint8_t uart_tx_fifo_buffer[32];
 
 struct uart_ctx uart0_ctx;
+struct spiflash_ctx flash_ctx;
 
 void
 uart_tx_unblocked(void *cbdata, unsigned space)
@@ -159,7 +160,7 @@ my_erase_cb(void *data)
         onboard_led(0 != (erase_pointer & 65536));
         flash_access_in_progress = 1;
         erase_pointer += 4096;
-        spiflash_erase_sector(erase_pointer - 4096, my_erase_cb, NULL);
+        spiflash_erase_sector(&flash_ctx, erase_pointer - 4096, my_erase_cb, NULL);
 }
 
 void flash_detect_cb(void *cbdata, uint8_t mfg_id, uint8_t memtype, uint8_t capacity)
@@ -174,7 +175,7 @@ midiflash_init(void)
 {
         spi_init();
         spiflash_pins_init();
-        spiflash_get_id(flash_detect_cb, NULL);
+        spiflash_get_id(&flash_ctx, flash_detect_cb, NULL);
         while(has_flash == -1)
                 ;
         if (has_flash)
@@ -211,7 +212,7 @@ midiflash_do_program(void)
                 {
                         flash_access_in_progress = 1;
                         crit_exit();
-                        spiflash_program_page(flash_write_addr++, data, 1, midiflash_program_cb, NULL);
+                        spiflash_program_page(&flash_ctx, flash_write_addr++, data, 1, midiflash_program_cb, NULL);
                         return;
                 }
         }
@@ -268,7 +269,7 @@ flash_read_delay_callback(void *cbdata)
         }
         time_last_delay += delay_value[0] + 128 * delay_value[1];
         time_next_note = time_last_delay;
-        spiflash_read_page(&flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
+        spiflash_read_page(&flash_ctx, &flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
 }
 
 static void
@@ -289,18 +290,18 @@ midiflash_read_callback(void *cbdata)
                 flash_read_addr += 2;
                 if (seq_mode == PM_SKIP_FORWARD)
                 {
-                        spiflash_read_page(&flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
+                        spiflash_read_page(&flash_ctx, &flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
                 }
                 else
                 {
                         // next 2 bytes = delay
-                        spiflash_read_page(delay_value, flash_read_addr - 2, 2, flash_read_delay_callback, NULL);
+                        spiflash_read_page(&flash_ctx, delay_value, flash_read_addr - 2, 2, flash_read_delay_callback, NULL);
                 }
         }
         else
         {
                 if (seq_mode == PM_SKIP_FORWARD)
-                        spiflash_read_page(&flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
+                        spiflash_read_page(&flash_ctx, &flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
                 else
                         note_received = 1;
         }
@@ -317,7 +318,7 @@ midiflash_do_playback(void *cbdata)
                 if (seq_mode == PM_PLAY_TO_USB || seq_mode == PM_PLAY_TO_BOTH)
                         uart_rx_handler(NULL, flash_byte);
 
-                spiflash_read_page(&flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
+                spiflash_read_page(&flash_ctx, &flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
         }
         else
                 midiflash_end_playback();
@@ -336,7 +337,7 @@ midiflash_start_playback(int mode, int delay, uint32_t start_addr)
         seq_mode = mode;
         flash_access_in_progress = 1;
         onboard_led(1);
-        spiflash_read_page(&flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
+        spiflash_read_page(&flash_ctx, &flash_byte, flash_read_addr++, 1, midiflash_read_callback, NULL);
 }
 
 static void
@@ -385,13 +386,13 @@ midiflash_findend_page_cb(void *cbdata)
                 }
                 else
                 {
-                        spiflash_read_page((uint8_t *)&flash_write_fifo_buffer, seekpos - 256U, 256, midiflash_findend_cb, NULL);
+                        spiflash_read_page(&flash_ctx, (uint8_t *)&flash_write_fifo_buffer, seekpos - 256U, 256, midiflash_findend_cb, NULL);
                 }
         }
         else
         {
                 seekpos += 256;
-                spiflash_read_page(pagedata, seekpos, 2, midiflash_findend_page_cb, NULL);        
+                spiflash_read_page(&flash_ctx, pagedata, seekpos, 2, midiflash_findend_page_cb, NULL);        
         }
 }
 
@@ -401,7 +402,7 @@ midiflash_findend(void)
         onboard_led(1);
         flash_access_in_progress = 1;
         seekpos = 0;
-        spiflash_read_page(pagedata, seekpos, 2, midiflash_findend_page_cb, NULL);
+        spiflash_read_page(&flash_ctx, pagedata, seekpos, 2, midiflash_findend_page_cb, NULL);
         while(flash_access_in_progress)
                 ;
         if (flash_write_addr < 1048576 - 256)
@@ -492,7 +493,7 @@ void handle_sysex_end(void)
                 {
                         flash_access_in_progress = 1;
                         flash_read_addr = sysex_buffer[1] + 128 * sysex_buffer[2] + 128 * 128 * sysex_buffer[3];
-                        spiflash_read_page(usb_readout_buf, flash_read_addr, 16, readout_cb, NULL);
+                        spiflash_read_page(&flash_ctx, usb_readout_buf, flash_read_addr, 16, readout_cb, NULL);
                 }
                 break;                
         }
