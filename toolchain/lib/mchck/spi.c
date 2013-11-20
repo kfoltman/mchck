@@ -41,7 +41,7 @@ spi_stop_xfer(void)
 int
 spi_is_xfer_active(void)
 {
-        return !SPI0.mcr.halt;
+        return SPI0.sr.txrxs;
 }
 
 void
