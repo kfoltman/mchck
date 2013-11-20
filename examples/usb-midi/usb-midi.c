@@ -162,9 +162,11 @@ my_erase_cb(void *data)
         spiflash_erase_sector(erase_pointer - 4096, my_erase_cb, NULL);
 }
 
-void flash_detect_cb(void *cbdata, uint8_t status)
+void flash_detect_cb(void *cbdata, uint8_t mfg_id, uint8_t memtype, uint8_t capacity)
 {
-        has_flash = status;
+        has_flash = (mfg_id == SPIFLASH_MFGID_WINBOND)
+                && (memtype == SPIFLASH_MEMTYPE_WINBOND_FLASH)
+                && (capacity == SPIFLASH_WINBOND_SIZE_1MB);
 }
 
 static void
@@ -172,7 +174,7 @@ midiflash_init(void)
 {
         spi_init();
         spiflash_pins_init();
-        spiflash_is_present(flash_detect_cb, NULL);
+        spiflash_get_id(flash_detect_cb, NULL);
         while(has_flash == -1)
                 ;
         if (has_flash)
