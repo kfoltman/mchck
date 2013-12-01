@@ -368,6 +368,14 @@ seq_cleanup_mode(void)
                 seq_panic();
                 onboard_led(0);
         }
+        if (seq_mode == PM_SKIP_FORWARD)
+        {
+                if (flash_read_addr > flash_write_addr)
+                        flash_read_addr = flash_write_addr;
+                usb_midi_send(0x4, 0xF0, 0x47, SYSEX_CMD_SKIP_RESPONSE);
+                usb_midi_send(0x4, flash_read_addr & 127, (flash_read_addr >> 7) & 127, (flash_read_addr >> 14) & 127);
+                usb_midi_send(0x5, 0xF7, 0, 0);
+        }
 }
 
 static void
