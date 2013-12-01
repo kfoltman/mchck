@@ -42,7 +42,7 @@ static void
 spiflash_status_spi_cb(void *cbdata)
 {
         struct spiflash_ctx *ctx = cbdata;
-        ctx->status_cb(ctx->cbdata, ctx->spi_response[1]);
+        ctx->status_cb(ctx->cbdata, ctx->spi_response[2]);
 }
 
 int
