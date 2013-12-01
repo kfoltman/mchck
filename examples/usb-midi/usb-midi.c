@@ -123,6 +123,13 @@ handle_sysex_end(void)
                         return;
                 }
                 break;                
+        case SYSEX_CMD_SET_SPEED:
+                if (sysex_state == 2)
+                {
+                        seq_set_speed(sysex_buffer[1]);
+                        return;
+                }
+                break;                
         }
         sysex_state = 0;
 }

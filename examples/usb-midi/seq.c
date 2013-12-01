@@ -9,13 +9,14 @@ static uint32_t requested_flash_read_addr = 0;
 static volatile uint32_t flash_write_addr = 0;
 static volatile uint32_t flash_read_addr = 0;
 static volatile int has_flash = -1;
-static volatile uint32_t time_next_note = -1, time_last_delay = 0;
+static volatile uint32_t time_next_note = -1, time_last_delay = 0, time_start_playback = 0;
 static uint32_t systime;
 struct fifo_ctx flash_write_fifo;
 static struct spiflash_ctx flash_ctx, readout_flash_ctx;
 static uint32_t last_write_time = 0;
 static volatile int flash_access_in_progress = 0;
 static struct midi_rx_context flash_playback_midi_context;
+static uint8_t playback_speed = 16;
 
 /****************************************************************************/
 
@@ -266,6 +267,18 @@ midiflash_handle_write_queue(void)
         crit_exit();
 }
 
+/**************************************************************************/
+
+void
+seq_set_speed(uint8_t speed)
+{
+        crit_enter();
+        if (seq_mode == PM_PLAY_TO_MIDI || seq_mode == PM_PLAY_TO_USB || seq_mode == PM_PLAY_TO_BOTH)
+                time_start_playback = systime - ((uint64_t)systime - time_start_playback) * playback_speed / speed;
+        playback_speed = speed;
+        crit_exit();
+}
+
 /******************************** Mode switching ***************************************/
 
 static void
@@ -319,7 +332,8 @@ seq_init_mode(enum SequencerMode prev_mode)
                 next_seq_mode = PM_NONE;
                 flash_byte_ready = 0;
                 
-                time_last_delay = systime;
+                time_start_playback = systime;
+                time_last_delay = 0;
                 time_next_note = time_last_delay;
 
                 flash_access_in_progress = 1;
@@ -370,6 +384,8 @@ seq_switch_mode(void)
         crit_exit();
 }
 
+/**************************************************************************/
+
 void PIT0_Handler(void)
 {
         systime++;
@@ -380,11 +396,19 @@ void PIT0_Handler(void)
                         flash_byte_ready = 0;
                         seq_switch_mode();
                 }
-                else if (((int32_t)(systime - time_next_note)) >= 0 && flash_byte_ready)
+                else 
                 {
-                        flash_byte_ready = 0;
-                        seq_play_byte(flash_byte);
-                        seq_request_flash_byte();
+                        int32_t reltime = (int32_t)(systime - time_start_playback);
+                        if (reltime > 0)
+                        {
+                                reltime = ((uint64_t)reltime * playback_speed) >> 4;
+                                if (reltime >= time_next_note && flash_byte_ready)
+                                {
+                                        flash_byte_ready = 0;
+                                        seq_play_byte(flash_byte);
+                                        seq_request_flash_byte();
+                                }
+                        }
                 }
         }
         else if (seq_mode == PM_RECORD && has_flash)

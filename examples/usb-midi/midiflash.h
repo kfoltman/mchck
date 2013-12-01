@@ -73,6 +73,12 @@ seq_send_status(void);
 extern void
 seq_record_to_flash(struct midi_rx_context *ctx, int bytes, int is_sysex);
 
+extern void
+seq_init(void);
+
+extern void
+seq_set_speed(uint8_t speed);
+
 /********************************************************************/
 
 enum {
@@ -86,6 +92,7 @@ enum {
         SYSEX_CMD_SKIP = 6,
         SYSEX_CMD_TRANSFER = 7,
         SYSEX_CMD_TRANSFER_RESPONSE = 0x47,
+        SYSEX_CMD_SET_SPEED = 8,
 };
 
 /********************************************************************/
@@ -96,5 +103,3 @@ usb_midi_send(uint8_t addr_type, uint8_t ctl, uint8_t data1, uint8_t data2);
 extern void
 send_from_midi_context_to_usb(struct midi_rx_context *ctx, int bytes, int is_sysex);
 
-extern void
-seq_init(void);
